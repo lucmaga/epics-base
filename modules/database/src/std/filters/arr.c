@@ -70,7 +70,7 @@ static int parse_ok(void *pvt)
 static void freeArray(db_field_log *pfl)
 {
     if (pfl->type == dbfl_type_ref) {
-        freeListFree(pfl->u.r.pvt, pfl->u.r.field);
+        if (pfl->u.r.pvt) freeListFree(pfl->u.r.pvt, pfl->u.r.field);
     }
 }
 
