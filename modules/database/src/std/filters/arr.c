@@ -28,6 +28,8 @@ typedef struct myStruct {
     epicsInt32 end;
     void *arrayFreeList;
     long no_elements;
+    long refCount;
+    unsigned int markToDestroy;
 } myStruct;
 
 static void *myStructFreeList;
@@ -48,6 +50,8 @@ static void * allocPvt(void)
     my->start = 0;
     my->incr = 1;
     my->end = -1;
+    my->refCount = 1;
+    my->markToDestroy = 0;
     return (void *) my;
 }
 
@@ -55,8 +59,15 @@ static void freePvt(void *pvt)
 {
     myStruct *my = (myStruct*) pvt;
 
-    if (my->arrayFreeList) freeListCleanup(my->arrayFreeList);
-    freeListFree(myStructFreeList, pvt);
+    my->refCount--;
+    if (my->refCount > 0) {
+        my->markToDestroy++;
+        return;
+    }
+    if (my->refCount <= 0 ) {
+        if (my->arrayFreeList) freeListCleanup(my->arrayFreeList);
+        freeListFree(myStructFreeList, pvt);
+    }
 }
 
 static int parse_ok(void *pvt)
@@ -69,8 +80,14 @@ static int parse_ok(void *pvt)
 
 static void freeArray(db_field_log *pfl)
 {
+    myStruct *my = (myStruct *)pfl->u.r.pvt;
+
     if (pfl->type == dbfl_type_ref) {
-        freeListFree(pfl->u.r.pvt, pfl->u.r.field);
+        freeListFree(my->arrayFreeList, pfl->u.r.field);
+        my->refCount--;
+    }
+    if (my->refCount <= 0 && my->markToDestroy){
+        freePvt(my);
     }
 }
 
@@ -126,7 +143,8 @@ static db_field_log* filter(void* pvt, dbChannel *chan, db_field_log *pfl)
             if (pfl->dtor) pfl->dtor(pfl);
             pfl->u.r.field = pTarget;
             pfl->dtor = freeArray;
-            pfl->u.r.pvt = my->arrayFreeList;
+            pfl->u.r.pvt = my;
+            my->refCount++;
         }
         /* adjust no_elements (even if zero elements remain) */
         pfl->no_elements = nTarget;
