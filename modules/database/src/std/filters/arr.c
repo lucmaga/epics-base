@@ -20,6 +20,7 @@
 #include "dbLock.h"
 #include "epicsExit.h"
 #include "freeList.h"
+#include "sharedFreeList.h"
 #include "epicsExport.h"
 
 typedef struct myStruct {
@@ -41,7 +42,7 @@ static const chfPluginArgDef opts[] = {
 
 static void * allocPvt(void)
 {
-    myStruct *my = (myStruct*) freeListCalloc(myStructFreeList);
+    myStruct *my = (myStruct*) sharedFreeListCalloc(myStructFreeList);
     if (!my) return NULL;
 
     /* defaults */
@@ -51,12 +52,16 @@ static void * allocPvt(void)
     return (void *) my;
 }
 
-static void freePvt(void *pvt)
+void dtorPvt (void *pvt)
 {
     myStruct *my = (myStruct*) pvt;
 
     if (my->arrayFreeList) freeListCleanup(my->arrayFreeList);
-    freeListFree(myStructFreeList, pvt);
+}
+
+static void freePvt(void *pvt)
+{
+    sharedFreeListRelease(myStructFreeList, pvt);
 }
 
 static int parse_ok(void *pvt)
@@ -69,8 +74,10 @@ static int parse_ok(void *pvt)
 
 static void freeArray(db_field_log *pfl)
 {
+    myStruct *my = (myStruct*) pfl->u.r.pvt;
     if (pfl->type == dbfl_type_ref) {
-        freeListFree(pfl->u.r.pvt, pfl->u.r.field);
+        freeListFree(my->arrayFreeList, pfl->u.r.field);
+        sharedFreeListRelease(myStructFreeList, my);
     }
 }
 
@@ -126,7 +133,8 @@ static db_field_log* filter(void* pvt, dbChannel *chan, db_field_log *pfl)
             if (pfl->dtor) pfl->dtor(pfl);
             pfl->u.r.field = pTarget;
             pfl->dtor = freeArray;
-            pfl->u.r.pvt = my->arrayFreeList;
+            pfl->u.r.pvt = my;
+            sharedFreeListAcquire(my);
         }
         /* adjust no_elements (even if zero elements remain) */
         pfl->no_elements = nTarget;
@@ -190,7 +198,7 @@ static void arrShutdown(void* ignore)
 static void arrInitialize(void)
 {
     if (!myStructFreeList)
-        freeListInitPvt(&myStructFreeList, sizeof(myStruct), 64);
+        sharedFreeListInitPvt(&myStructFreeList, dtorPvt, sizeof(myStruct), 64);
 
     chfPluginRegister("arr", &pif, opts);
     epicsAtExit(arrShutdown, NULL);

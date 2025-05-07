@@ -10,5 +10,7 @@
 SRC_DIRS += $(LIBCOM)/freeList
 
 INC += freeList.h
+INC += sharedFreeList.h
 
 Com_SRCS += freeListLib.c
+Com_SRCS += sharedFreeList.c
